@@ -47,6 +47,7 @@
   white-space: nowrap;
   flex: 1;                  /* takes remaining space next to delete button */
   margin-left: 28px;        /* leave room for delete button */
+	user-select: none;
 }
 
 /* Marquee animation container */
