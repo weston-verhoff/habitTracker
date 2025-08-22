@@ -1,3 +1,4 @@
+// habitTracker.js
 const DAYS_SHOWN = 30;
 let db;
 
@@ -16,35 +17,55 @@ request.onsuccess = (event) => {
   displayGrid();
 };
 
+// ---- NEW: single source of truth for the visible date keys ----
+function getDateKeys() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // normalize to local midnight
+  const keys = [];
+  for (let i = DAYS_SHOWN - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    keys.push(d.toISOString().split('T')[0]); // stable YYYY-MM-DD
+  }
+  return keys;
+}
+
 document.getElementById('habitForm').addEventListener('submit', function (e) {
   e.preventDefault();
   const input = document.getElementById('habitInput');
   const habit = { name: input.value, created: new Date().toISOString().split('T')[0] };
   const tx = db.transaction('habits', 'readwrite');
-  tx.objectStore('habits').add(habit).onsuccess = () => {
+  tx.objectStore('habits').add(habit);
+  tx.oncomplete = () => {
     input.value = '';
+    // Rebuild header too, in case today changed while app was open
+    generateDateHeaders();
     displayGrid();
   };
 });
 
 function generateDateHeaders() {
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const dates = getDateKeys();
+  const todayStr = dates[dates.length - 1];
+
   const dateRow = document.getElementById('dateRow');
   dateRow.innerHTML = '<div id="habitHeader" class="habitColumn sticky left-0 bg-white z-20 px-2 border-r">Habit</div>';
 
-  for (let i = DAYS_SHOWN - 1; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    const label = `${date.toLocaleDateString(undefined, { weekday: 'short' })} (${date.getMonth()+1}/${date.getDate()})`;
+  dates.forEach(dateStr => {
+    // Build a local Date from parts to avoid UTC surprises
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const local = new Date(y, m - 1, d);
+
+    const label = `${local.toLocaleDateString(undefined, { weekday: 'short' })} (${local.getMonth() + 1}/${local.getDate()})`;
 
     const cell = document.createElement('div');
     cell.className = 'cell';
     cell.textContent = label;
-    if (date.toISOString().split('T')[0] === todayStr) cell.classList.add('today-col');
+    cell.dataset.date = dateStr;
+    if (dateStr === todayStr) cell.classList.add('today-col');
 
     dateRow.appendChild(cell);
-  }
+  });
 }
 
 function displayGrid() {
@@ -53,20 +74,13 @@ function displayGrid() {
   const habitGrid = document.getElementById('habitGrid');
   habitGrid.innerHTML = '';
 
-  const today = new Date();
-  const dates = Array.from({ length: DAYS_SHOWN }, (_, i) => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - (DAYS_SHOWN - 1 - i));
-    return d.toISOString().split('T')[0];
-  });
+  // ✅ Use the same date keys as the header
+  const dates = getDateKeys();
 
   habitStore.getAll().onsuccess = function (e) {
     const habits = e.target.result;
 
     habits.forEach(habit => {
-      const habitStartIndex = dates.findIndex(date => date >= habit.created);
-      const activeDates = habitStartIndex >= 0 ? dates.slice(habitStartIndex) : [];
-
       const rowDiv = document.createElement('div');
       rowDiv.className = 'flex';
 
@@ -87,12 +101,14 @@ function displayGrid() {
       const marquee = document.createElement('div');
       marquee.className = 'marquee';
 
-      // Add two spans to repeat text for seamless scroll
+      // Progress shows total active days since created
+      const activeStartIdx = dates.findIndex(d => d >= habit.created);
+      const activeDates = activeStartIdx >= 0 ? dates.slice(activeStartIdx) : [];
+
       const span1 = document.createElement('span');
       span1.textContent = `${habit.name} (${activeDates.length})`;
       const span2 = document.createElement('span');
       span2.textContent = `${habit.name} (${activeDates.length})`;
-
       marquee.appendChild(span1);
       marquee.appendChild(span2);
       marqueeWrapper.appendChild(marquee);
@@ -100,7 +116,7 @@ function displayGrid() {
 
       rowDiv.appendChild(sticky);
 
-      // Add checkboxes
+      // Add checkbox cells
       dates.forEach(dateStr => {
         const cell = document.createElement('div');
         cell.className = 'cell';
@@ -109,17 +125,19 @@ function displayGrid() {
           const checkbox = document.createElement('input');
           checkbox.type = 'checkbox';
 
+          // Restore persisted check state
           const txCheck = db.transaction('checks', 'readonly');
-          txCheck.objectStore('checks').get([habit.id, dateStr]).onsuccess = e => {
-            if (e.target.result) checkbox.checked = true;
+          txCheck.objectStore('checks').get([habit.id, dateStr]).onsuccess = ev => {
+            if (ev.target.result) checkbox.checked = true;
           };
 
           checkbox.addEventListener('change', () => {
-            const tx = db.transaction('checks', 'readwrite');
-            const store = tx.objectStore('checks');
+            const wtx = db.transaction('checks', 'readwrite');
+            const store = wtx.objectStore('checks');
             if (checkbox.checked) store.put({ habitId: habit.id, date: dateStr });
             else store.delete([habit.id, dateStr]);
-            displayGrid();
+            // ✅ Only re-render after the write actually commits
+            wtx.oncomplete = () => displayGrid();
           });
 
           cell.appendChild(checkbox);
@@ -134,8 +152,6 @@ function displayGrid() {
     scrollToRightEdge();
   };
 }
-
-
 
 function scrollToRightEdge() {
   const wrapper = document.getElementById('gridWrapper');
@@ -158,7 +174,14 @@ function deleteHabit(habitId) {
       cursor.continue();
     }
   };
-  setTimeout(() => { displayGrid(); }, 50);
+  // Re-render after both transactions complete
+  let done = 0;
+  function maybeRender() {
+    done += 1;
+    if (done === 2) displayGrid();
+  }
+  tx1.oncomplete = maybeRender;
+  tx2.oncomplete = maybeRender;
 }
 
 // Drag-scroll
