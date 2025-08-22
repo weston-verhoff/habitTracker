@@ -1,0 +1,95 @@
+/* Scrollable grid wrapper */
+.drag-scroll {
+  cursor: grab;
+  overflow-x: auto;
+}
+
+.drag-scroll:active {
+  cursor: grabbing;
+}
+
+/* Today column highlight */
+.today-col {
+  background-color: #e0f2fe;
+}
+
+/* Sticky habit column for each row */
+.habitColumn {
+  position: relative;       /* for absolute positioning of delete button */
+  display: flex;
+  align-items: center;
+  min-width: 150px;         /* minimum width for habit column */
+  max-width: 150px;         /* fix width */
+  background-color: white;
+  border-right: 1px solid #e5e7eb; /* gray-200 */
+  z-index: 10;
+  box-sizing: border-box;   /* include padding in width */
+  padding-left: 8px;
+}
+
+/* Delete button always visible on left */
+.delete-btn {
+  position: absolute;       /* removed from normal flow */
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  color: #ef4444;           /* red-500 */
+  font-weight: bold;
+  background: transparent;
+  border: none;
+  flex-shrink: 0;
+}
+
+/* Wrapper for marquee text */
+.marquee-wrapper {
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 1;                  /* takes remaining space next to delete button */
+  margin-left: 28px;        /* leave room for delete button */
+}
+
+/* Marquee animation container */
+.marquee {
+  display: inline-block;
+  animation: scrollText 10s linear infinite;
+}
+
+/* Repeat spans in marquee with small gap */
+.marquee span {
+  padding-right: 2ch;
+}
+
+/* Marquee keyframes for seamless scrolling */
+@keyframes scrollText {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Cells for date columns */
+.cell {
+  display: inline-block;
+  min-width: 100px;
+  text-align: center;
+	padding: 4px 0;
+  border-bottom: 1px solid #e5e7eb; /* gray-200 */
+}
+
+/* Header row styling */
+#dateRow {
+  font-weight: bold;
+  color: #374151; /* gray-700 */
+  margin-bottom: 4px;
+  position: sticky;
+  top: 0;
+  background-color: white;
+  z-index: 20;
+}
+
+/* Habit header cell */
+.habitHeader {
+  min-width: 150px;
+  text-align: left;
+  padding-left: 8px;
+  border-right: 1px solid #e5e7eb;
+}
