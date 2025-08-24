@@ -17,7 +17,15 @@ request.onsuccess = (event) => {
   displayGrid();
 };
 
-// ---- NEW: single source of truth for the visible date keys ----
+// ---- Helper: local date string YYYY-MM-DD (avoids UTC "tomorrow" bug) ----
+function getLocalDateString(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// ---- Single source of truth for visible date keys (local) ----
 function getDateKeys() {
   const today = new Date();
   today.setHours(0, 0, 0, 0); // normalize to local midnight
@@ -25,7 +33,7 @@ function getDateKeys() {
   for (let i = DAYS_SHOWN - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
-    keys.push(d.toISOString().split('T')[0]); // stable YYYY-MM-DD
+    keys.push(getLocalDateString(d)); // stable local YYYY-MM-DD
   }
   return keys;
 }
@@ -33,12 +41,12 @@ function getDateKeys() {
 document.getElementById('habitForm').addEventListener('submit', function (e) {
   e.preventDefault();
   const input = document.getElementById('habitInput');
-  const habit = { name: input.value, created: new Date().toISOString().split('T')[0] };
+  const habit = { name: input.value, created: getLocalDateString() }; // <-- local date
   const tx = db.transaction('habits', 'readwrite');
   tx.objectStore('habits').add(habit);
   tx.oncomplete = () => {
     input.value = '';
-    // Rebuild header too, in case today changed while app was open
+    // Rebuild header too, in case day rolled over while app open
     generateDateHeaders();
     displayGrid();
   };
@@ -52,10 +60,8 @@ function generateDateHeaders() {
   dateRow.innerHTML = '<div id="habitHeader" class="habitColumn sticky left-0 bg-white z-20 px-2 border-r">Habit</div>';
 
   dates.forEach(dateStr => {
-    // Build a local Date from parts to avoid UTC surprises
     const [y, m, d] = dateStr.split('-').map(Number);
     const local = new Date(y, m - 1, d);
-
     const label = `${local.toLocaleDateString(undefined, { weekday: 'short' })} (${local.getMonth() + 1}/${local.getDate()})`;
 
     const cell = document.createElement('div');
@@ -74,79 +80,84 @@ function displayGrid() {
   const habitGrid = document.getElementById('habitGrid');
   habitGrid.innerHTML = '';
 
-  // ✅ Use the same date keys as the header
   const dates = getDateKeys();
 
   habitStore.getAll().onsuccess = function (e) {
     const habits = e.target.result;
 
     habits.forEach(habit => {
-      const rowDiv = document.createElement('div');
-      rowDiv.className = 'flex';
+      // for each habit, also load its checks
+      const txChecks = db.transaction('checks', 'readonly');
+      const store = txChecks.objectStore('checks');
+      const range = IDBKeyRange.bound([habit.id, habit.created], [habit.id, '\uffff']);
+      const req = store.getAll(range);
 
-      // sticky first column with delete button + marquee
-      const sticky = document.createElement('div');
-      sticky.className = 'habitColumn sticky left-0 bg-white z-10 px-0 flex items-center border-r';
+      req.onsuccess = function (ev) {
+        const completedChecks = ev.target.result.map(c => c.date);
+        const completedCount = completedChecks.length;
 
-      // Delete button
-      const delBtn = document.createElement('button');
-      delBtn.className = 'delete-btn ml-1 mr-2 text-red-500';
-      delBtn.textContent = '✕';
-      delBtn.addEventListener('click', () => deleteHabit(habit.id));
-      sticky.appendChild(delBtn);
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'flex';
 
-      // Marquee wrapper
-      const marqueeWrapper = document.createElement('div');
-      marqueeWrapper.className = 'marquee-wrapper';
-      const marquee = document.createElement('div');
-      marquee.className = 'marquee';
+        // sticky first column with delete button + marquee
+        const sticky = document.createElement('div');
+        sticky.className = 'habitColumn sticky left-0 bg-white z-10 px-0 flex items-center border-r';
 
-      // Progress shows total active days since created
-      const activeStartIdx = dates.findIndex(d => d >= habit.created);
-      const activeDates = activeStartIdx >= 0 ? dates.slice(activeStartIdx) : [];
+        // Delete button
+        const delBtn = document.createElement('button');
+        delBtn.className = 'delete-btn ml-1 mr-2 text-red-500';
+        delBtn.textContent = '✕';
+        delBtn.addEventListener('click', () => deleteHabit(habit.id));
+        sticky.appendChild(delBtn);
 
-      const span1 = document.createElement('span');
-      span1.textContent = `${habit.name} (${activeDates.length})`;
-      const span2 = document.createElement('span');
-      span2.textContent = `${habit.name} (${activeDates.length})`;
-      marquee.appendChild(span1);
-      marquee.appendChild(span2);
-      marqueeWrapper.appendChild(marquee);
-      sticky.appendChild(marqueeWrapper);
+        // Marquee wrapper
+        const marqueeWrapper = document.createElement('div');
+        marqueeWrapper.className = 'marquee-wrapper';
+        const marquee = document.createElement('div');
+        marquee.className = 'marquee';
 
-      rowDiv.appendChild(sticky);
+        const span1 = document.createElement('span');
+        span1.textContent = `${habit.name} (${completedCount})`;
+        const span2 = document.createElement('span');
+        span2.textContent = `${habit.name} (${completedCount})`;
 
-      // Add checkbox cells
-      dates.forEach(dateStr => {
-        const cell = document.createElement('div');
-        cell.className = 'cell';
+        marquee.appendChild(span1);
+        marquee.appendChild(span2);
+        marqueeWrapper.appendChild(marquee);
+        sticky.appendChild(marqueeWrapper);
 
-        if (dateStr >= habit.created) {
-          const checkbox = document.createElement('input');
-          checkbox.type = 'checkbox';
+        rowDiv.appendChild(sticky);
 
-          // Restore persisted check state
-          const txCheck = db.transaction('checks', 'readonly');
-          txCheck.objectStore('checks').get([habit.id, dateStr]).onsuccess = ev => {
-            if (ev.target.result) checkbox.checked = true;
-          };
+        // Add checkbox cells
+        dates.forEach(dateStr => {
+          const cell = document.createElement('div');
+          cell.className = 'cell';
 
-          checkbox.addEventListener('change', () => {
-            const wtx = db.transaction('checks', 'readwrite');
-            const store = wtx.objectStore('checks');
-            if (checkbox.checked) store.put({ habitId: habit.id, date: dateStr });
-            else store.delete([habit.id, dateStr]);
-            // ✅ Only re-render after the write actually commits
-            wtx.oncomplete = () => displayGrid();
-          });
+          if (dateStr >= habit.created) {
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
 
-          cell.appendChild(checkbox);
-        }
+            // Restore persisted check state
+            if (completedChecks.includes(dateStr)) {
+              checkbox.checked = true;
+            }
 
-        rowDiv.appendChild(cell);
-      });
+            checkbox.addEventListener('change', () => {
+              const wtx = db.transaction('checks', 'readwrite');
+              const store = wtx.objectStore('checks');
+              if (checkbox.checked) store.put({ habitId: habit.id, date: dateStr });
+              else store.delete([habit.id, dateStr]);
+              wtx.oncomplete = () => displayGrid();
+            });
 
-      habitGrid.appendChild(rowDiv);
+            cell.appendChild(checkbox);
+          }
+
+          rowDiv.appendChild(cell);
+        });
+
+        habitGrid.appendChild(rowDiv);
+      };
     });
 
     scrollToRightEdge();
@@ -174,7 +185,6 @@ function deleteHabit(habitId) {
       cursor.continue();
     }
   };
-  // Re-render after both transactions complete
   let done = 0;
   function maybeRender() {
     done += 1;
