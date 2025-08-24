@@ -57,7 +57,7 @@ function generateDateHeaders() {
   const todayStr = dates[dates.length - 1];
 
   const dateRow = document.getElementById('dateRow');
-  dateRow.innerHTML = '<div id="habitHeader" class="habitColumn sticky left-0 bg-white z-20 px-2 border-r">Habit</div>';
+  dateRow.innerHTML = ''; // clear
 
   dates.forEach(dateStr => {
     const [y, m, d] = dateStr.split('-').map(Number);
@@ -72,6 +72,13 @@ function generateDateHeaders() {
 
     dateRow.appendChild(cell);
   });
+
+  // sticky header cell on right
+  const habitHeader = document.createElement('div');
+  habitHeader.id = 'habitHeader';
+  habitHeader.className = 'habitColumn sticky right-0 bg-white z-20 px-2 border-l';
+  habitHeader.textContent = 'Habit';
+  dateRow.appendChild(habitHeader);
 }
 
 function displayGrid() {
@@ -91,72 +98,79 @@ function displayGrid() {
       const store = txChecks.objectStore('checks');
       const range = IDBKeyRange.bound([habit.id, habit.created], [habit.id, '\uffff']);
       const req = store.getAll(range);
+			const totalDays = Math.floor((new Date() - new Date(habit.createdAt)) / (1000 * 60 * 60 * 24)) + 1; // +1 to count the creation day itself
 
       req.onsuccess = function (ev) {
         const completedChecks = ev.target.result.map(c => c.date);
         const completedCount = completedChecks.length;
 
-        const rowDiv = document.createElement('div');
-        rowDiv.className = 'flex';
+				const rowDiv = document.createElement('div');
+				rowDiv.className = 'flex';
 
-        // sticky first column with delete button + marquee
-        const sticky = document.createElement('div');
-        sticky.className = 'habitColumn sticky left-0 bg-white z-10 px-0 flex items-center border-r';
+				// Add checkbox cells first
+				dates.forEach(dateStr => {
+				  const cell = document.createElement('div');
+				  cell.className = 'cell';
 
-        // Delete button
-        const delBtn = document.createElement('button');
-        delBtn.className = 'delete-btn ml-1 mr-2 text-red-500';
-        delBtn.textContent = '✕';
-        delBtn.addEventListener('click', () => deleteHabit(habit.id));
-        sticky.appendChild(delBtn);
+				  if (dateStr >= habit.created) {
+				    const checkbox = document.createElement('input');
+				    checkbox.type = 'checkbox';
 
-        // Marquee wrapper
-        const marqueeWrapper = document.createElement('div');
-        marqueeWrapper.className = 'marquee-wrapper';
-        const marquee = document.createElement('div');
-        marquee.className = 'marquee';
+				    if (completedChecks.includes(dateStr)) {
+				      checkbox.checked = true;
+				    }
 
-        const span1 = document.createElement('span');
-        span1.textContent = `${habit.name} (${completedCount})`;
-        const span2 = document.createElement('span');
-        span2.textContent = `${habit.name} (${completedCount})`;
+				    checkbox.addEventListener('change', () => {
+				      const wtx = db.transaction('checks', 'readwrite');
+				      const store = wtx.objectStore('checks');
+				      if (checkbox.checked) store.put({ habitId: habit.id, date: dateStr });
+				      else store.delete([habit.id, dateStr]);
+				      wtx.oncomplete = () => displayGrid();
+				    });
 
-        marquee.appendChild(span1);
-        marquee.appendChild(span2);
-        marqueeWrapper.appendChild(marquee);
-        sticky.appendChild(marqueeWrapper);
+				    cell.appendChild(checkbox);
+				  }
 
-        rowDiv.appendChild(sticky);
+				  rowDiv.appendChild(cell);
+				});
 
-        // Add checkbox cells
-        dates.forEach(dateStr => {
-          const cell = document.createElement('div');
-          cell.className = 'cell';
+				// sticky habit label LAST (on right side)
+				const sticky = document.createElement('div');
+				sticky.className = 'habitColumn sticky right-0 bg-white z-10 px-0 flex items-center border-l';
 
-          if (dateStr >= habit.created) {
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
+				// Delete button
+				const delBtn = document.createElement('button');
+				delBtn.className = 'delete-btn ml-1 mr-2 text-red-500';
+				delBtn.textContent = '✕';
+				delBtn.addEventListener('click', () => deleteHabit(habit.id));
+				sticky.appendChild(delBtn);
 
-            // Restore persisted check state
-            if (completedChecks.includes(dateStr)) {
-              checkbox.checked = true;
-            }
+				// Marquee wrapper
+				const marqueeWrapper = document.createElement('div');
+				marqueeWrapper.className = 'marquee-wrapper';
+				const marquee = document.createElement('div');
+				marquee.className = 'marquee';
 
-            checkbox.addEventListener('change', () => {
-              const wtx = db.transaction('checks', 'readwrite');
-              const store = wtx.objectStore('checks');
-              if (checkbox.checked) store.put({ habitId: habit.id, date: dateStr });
-              else store.delete([habit.id, dateStr]);
-              wtx.oncomplete = () => displayGrid();
-            });
+				const createdDate = new Date(habit.created);
+				const today = new Date();
+				today.setHours(0,0,0,0);
+				const diffMs = today - createdDate;
+				const totalDays = diffMs >= 0
+				    ? Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1
+				    : 0;
 
-            cell.appendChild(checkbox);
-          }
+				const span1 = document.createElement('span');
+				span1.textContent = `${habit.name} (${completedCount}/${totalDays})`;
+				const span2 = document.createElement('span');
+				span2.textContent = `${habit.name} (${completedCount}/${totalDays})`;
 
-          rowDiv.appendChild(cell);
-        });
+				marquee.appendChild(span1);
+				marquee.appendChild(span2);
+				marqueeWrapper.appendChild(marquee);
+				sticky.appendChild(marqueeWrapper);
 
-        habitGrid.appendChild(rowDiv);
+				rowDiv.appendChild(sticky);
+				habitGrid.appendChild(rowDiv);
       };
     });
 
